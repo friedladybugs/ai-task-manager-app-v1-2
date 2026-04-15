@@ -1,0 +1,7 @@
+node_modules/
+.env
+.edge-*/
+*.png
+edge-stdout.txt
+edge-stderr.txt
+npm-debug.log*

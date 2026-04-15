@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI任务规划 · 使用说明</title>
+  <style>
+    body{max-width:860px;margin:30px auto;padding:0 16px 40px;font-family:Arial,"Microsoft YaHei",sans-serif;line-height:1.75;color:#111827;background:#f9fafb}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;margin-top:16px;box-shadow:0 10px 24px rgba(0,0,0,.05)}
+    h1,h2{margin-top:0}
+  </style>
+</head>
+<body>
+  <h1>AI任务规划 · 使用说明</h1>
+
+  <div class="card">
+    <h2>产品方向</h2>
+    <p>这个应用坚持“用户主导，AI 辅助”。默认添加任务只记录任务内容和截止日期，不自动消耗 AI。只有需要拆解、排序、安排节奏的任务，才建议开启 AI 规划。</p>
+  </div>
+
+  <div class="card">
+    <h2>AI 规划开关</h2>
+    <p>今日页有主要的快速添加入口，任务页也保留一个轻量添加入口。添加任务弹层里的“启用 AI 规划”开关默认关闭。关闭时只保存任务；开启时保存任务后才会调用本地接口生成计划。</p>
+    <p>如果没有连接 AI 服务，应用会以本地模式继续运行。任务添加、筛选、完成状态、详情和本地存储都可以正常使用；点击 AI 规划时会给出未连接提示。</p>
+    <p>接入线上 AI 服务时，可以通过 <code>window.AI_TASK_API_BASE_URL</code>、URL 参数 <code>?ai_api=</code>，或 localStorage 中的 <code>AI_TASK_API_BASE_URL</code> 配置接口基地址。</p>
+  </div>
+
+  <div class="card">
+    <h2>任务详情</h2>
+    <p>未规划任务会优先显示“生成 AI 计划”和“标记完成”。已规划任务优先显示优先级、理由和阶段计划，再展示每日安排、进度和节奏反馈。</p>
+  </div>
+
+  <div class="card">
+    <h2>今日页</h2>
+    <p>今日页用于打开后快速知道今天该做什么：顶部鼓励语、今日进度、今日任务、截止提醒和快速添加任务。今日任务只展示已启用 AI 且被判断为复杂任务的每日安排。</p>
+  </div>
+
+  <div class="card">
+    <h2>任务页</h2>
+    <p>任务页用于管理全部任务，筛选固定为全部、已规划、未规划、已完成。任务卡片只保留任务名、截止日期、当前优先级和 AI 状态。</p>
+  </div>
+</body>
+</html>

@@ -347,6 +347,9 @@ function promptForSecretary(body, actionLabel) {
 5. 如果是顺延或重排，要生成简短 message 和 rescheduleLogs，让用户知道为什么这样调整。
 6. 输出尽量克制，不要催促，不要制造压力。
 7. 如果 entries 非空，必须至少为每条 entry 返回一个对应 items 记录；不要把 entries 当作空内容。
+8. 识别重复习惯/周期事项：包含“每天、每日、每晚、每天晚上、每天早上、每天想做、长期坚持”等表达时，items.recurrence.type 用 daily；包含“每周、每星期、每礼拜、每周三”等表达时用 weekly，并写入 weekdays（周一=1，周日=7）。
+9. 重复事项不能只安排第一天。请至少展开今天起未来 7 天的 schedules；weekly 只放在对应 weekday。blocked、rest、no_schedule 日期跳过，并在 rescheduleLogs 中简短说明。
+10. 如果某天安排偏紧，habit 可作为 optionalItems 或轻量事项保留，不要完全丢失。
 
 必须返回结构：
 {
@@ -365,8 +368,8 @@ function promptForSecretary(body, actionLabel) {
       "urgency": 1,
       "deadline": "YYYY-MM-DD 或 null",
       "fixedDate": "YYYY-MM-DD 或 null",
-      "recurrence": "daily/weekly/null",
-      "preferredTime": "morning/afternoon/evening/bedtime/anytime",
+      "recurrence": {"type":"daily/weekly","interval":1,"weekdays":[1,3],"sourceText":"原文"} 或 null,
+      "preferredTime": "morning/afternoon/evening/night/free",
       "durationBucket": "short/medium/long",
       "energy": "low/medium/high",
       "flexible": true,
@@ -430,6 +433,24 @@ function cleanSecretaryResult(plan) {
   const statuses = new Set(["active", "done", "deleted"]);
   const dayStatuses = new Set(["light", "normal", "tight", "rest", "blocked", "no_schedule"]);
   const slots = ["morning", "afternoon", "evening", "bedtime", "anytime"];
+  const preferredTimes = ["morning", "afternoon", "evening", "night", "free", "bedtime", "anytime"];
+  const cleanRecurrence = (value) => {
+    if (!value) return null;
+    if (typeof value === "string") {
+      if (!["daily", "weekly"].includes(value)) return null;
+      return { type: value, interval: 1, weekdays: [], sourceText: "" };
+    }
+    if (typeof value !== "object" || !["daily", "weekly"].includes(value.type)) return null;
+    const weekdays = Array.isArray(value.weekdays)
+      ? value.weekdays.map(Number).filter((day) => day >= 1 && day <= 7).slice(0, 7)
+      : [];
+    return {
+      type: value.type,
+      interval: Math.max(1, Math.min(4, Number(value.interval || 1))),
+      weekdays: value.type === "weekly" ? weekdays : [],
+      sourceText: String(value.sourceText || "").slice(0, 180)
+    };
+  };
   const items = Array.isArray(plan?.items) ? plan.items.slice(0, 80).map((item) => ({
     id: cleanId(item?.id, "item"),
     entryId: String(item?.entryId || "").slice(0, 80),
@@ -443,8 +464,8 @@ function cleanSecretaryResult(plan) {
     urgency: Math.max(1, Math.min(3, Number(item?.urgency || 2))),
     deadline: item?.deadline || null,
     fixedDate: item?.fixedDate || null,
-    recurrence: item?.recurrence || null,
-    preferredTime: slots.includes(item?.preferredTime) ? item.preferredTime : "anytime",
+    recurrence: cleanRecurrence(item?.recurrence),
+    preferredTime: preferredTimes.includes(item?.preferredTime) ? item.preferredTime : "free",
     durationBucket: ["short", "medium", "long"].includes(item?.durationBucket) ? item.durationBucket : "medium",
     energy: ["low", "medium", "high"].includes(item?.energy) ? item.energy : "medium",
     flexible: item?.flexible !== false,

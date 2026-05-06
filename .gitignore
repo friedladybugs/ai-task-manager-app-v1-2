@@ -1,6 +1,9 @@
 node_modules/
 .env
 .edge-*/
+backup-v2-full-*/
+v2-stage1-verification-shots/
+v2-full-verification-shots/
 *.png
 edge-stdout.txt
 edge-stderr.txt

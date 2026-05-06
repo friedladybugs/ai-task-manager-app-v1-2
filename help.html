@@ -3,41 +3,44 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI任务规划 · 使用说明</title>
+  <title>AI 私人日程秘书 · 使用说明</title>
   <style>
-    body{max-width:860px;margin:30px auto;padding:0 16px 40px;font-family:Arial,"Microsoft YaHei",sans-serif;line-height:1.75;color:#111827;background:#f9fafb}
-    .card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;margin-top:16px;box-shadow:0 10px 24px rgba(0,0,0,.05)}
-    h1,h2{margin-top:0}
+    body{max-width:860px;margin:30px auto;padding:0 16px 40px;font-family:Arial,"Microsoft YaHei",sans-serif;line-height:1.75;color:#17211d;background:#f4f6f5}
+    .card{background:#fff;border:1px solid #dfe7e3;border-radius:8px;padding:20px;margin-top:16px;box-shadow:0 6px 18px rgba(24,32,29,.06)}
+    h1,h2{margin-top:0}code{background:#eef4f1;padding:2px 5px;border-radius:5px}
   </style>
 </head>
 <body>
-  <h1>AI任务规划 · 使用说明</h1>
+  <h1>AI 私人日程秘书 · 使用说明</h1>
 
   <div class="card">
     <h2>产品方向</h2>
-    <p>这个应用坚持“用户主导，AI 辅助”。默认添加任务只记录任务内容和截止日期，不自动消耗 AI。只有需要拆解、排序、安排节奏的任务，才建议开启 AI 规划。</p>
+    <p>你只需要随手记录脑子里的事情：任务、目标、习惯、兴趣、偏好、某天有事或不安排。系统会先保存到事项池，等你主动点击“AI整理日程”后再统一分类和安排。</p>
   </div>
 
   <div class="card">
-    <h2>AI 规划开关</h2>
-    <p>今日页有主要的快速添加入口，任务页也保留一个轻量添加入口。添加任务弹层里的“启用 AI 规划”开关默认关闭。关闭时只保存任务；开启时保存任务后才会调用本地接口生成计划。</p>
-    <p>如果没有连接 AI 服务，应用会以本地模式继续运行。任务添加、筛选、完成状态、详情和本地存储都可以正常使用；点击 AI 规划时会给出未连接提示。</p>
-    <p>接入线上 AI 服务时，可以通过 <code>window.AI_TASK_API_BASE_URL</code>、URL 参数 <code>?ai_api=</code>，或 localStorage 中的 <code>AI_TASK_API_BASE_URL</code> 配置接口基地址。</p>
+    <h2>今日安排</h2>
+    <p>今日页展示今天怎么过，包括今日建议、重点事项、上午/下午/晚上/睡前/空闲时安排，以及当天轻松、正常或偏紧的提示。第一版不会强制精确到几点。</p>
   </div>
 
   <div class="card">
-    <h2>任务详情</h2>
-    <p>未规划任务会优先显示“生成 AI 计划”和“标记完成”。已规划任务优先显示优先级、理由和阶段计划，再展示每日安排、进度和节奏反馈。</p>
+    <h2>日历</h2>
+    <p>日历页使用月视图轻标记每天状态。点击某天可以查看详情，也可以把那天标记为全天有事、休息日或不安排。系统会把当天事项顺延到后续合适日期。</p>
   </div>
 
   <div class="card">
-    <h2>今日页</h2>
-    <p>今日页用于打开后快速知道今天该做什么：顶部鼓励语、今日进度、今日任务、截止提醒和快速添加任务。今日任务只展示已启用 AI 且被判断为复杂任务的每日安排。</p>
+    <h2>事项库</h2>
+    <p>事项库展示所有原始输入和分类结果，支持按必做事项、长期目标、日常习惯、兴趣放松、临时杂事、用户偏好、时间限制、已完成筛选。旧任务详情里的单任务 AI 规划仍然保留。</p>
   </div>
 
   <div class="card">
-    <h2>任务页</h2>
-    <p>任务页用于管理全部任务，筛选固定为全部、已规划、未规划、已完成。任务卡片只保留任务名、截止日期、当前优先级和 AI 状态。</p>
+    <h2>未完成与顺延</h2>
+    <p>如果今天没完成某项，可以选择原因，例如时间不够、任务太难、状态不好、临时有事、不想做、忘了或计划太满。系统会给出顺延或重排说明，不会用红色催促。</p>
+  </div>
+
+  <div class="card">
+    <h2>本地模式和 AI</h2>
+    <p>未连接 AI 服务时，应用仍可使用本地规则进行分类、安排和顺延。连接后端后，批量整理会调用 <code>/api/organize-schedule</code>，日期顺延调用 <code>/api/reschedule-day</code>，未完成重排调用 <code>/api/reschedule-missed</code>。旧的 <code>/api/plan-task-quick</code> 和 <code>/api/plan-task-detail</code> 仍用于单任务规划。</p>
   </div>
 </body>
 </html>

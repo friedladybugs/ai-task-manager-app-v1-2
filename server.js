@@ -9,6 +9,8 @@ const port = process.env.PORT || 3000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+app.set("trust proxy", true);
+
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -32,7 +34,11 @@ app.get("/api/health", (req, res) => {
 });
 
 app.get("/config.js", (req, res) => {
-  const apiBase = process.env.PUBLIC_AI_API_BASE_URL || (process.env.DEEPSEEK_API_KEY ? `${req.protocol}://${req.get("host")}` : "");
+  const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+  const host = req.get("x-forwarded-host") || req.get("host");
+  const proto = host?.endsWith(".onrender.com") ? "https" : (forwardedProto || req.protocol || "https");
+  const inferredBase = host ? `${proto}://${host}` : "";
+  const apiBase = process.env.PUBLIC_AI_API_BASE_URL || (process.env.DEEPSEEK_API_KEY ? inferredBase : "");
   res.type("application/javascript").send(`window.AI_TASK_API_BASE_URL=${JSON.stringify(apiBase)};`);
 });
 
@@ -47,8 +53,8 @@ function promptForPlan(body) {
 3. complex 指需要多阶段完成、需要排序、节奏安排或跨多天推进的任务。
 4. 所有任务都返回 complexity、priority、priority_reason、today_focus。
 5. simple 任务不要返回阶段计划，phases 必须是空数组。
-6. complex 任务才返回 phases，阶段数最多 3 个。
-7. 每个阶段 daily_plan 最多 3 条，每条只写一个可执行动作。
+6. complex 任务才返回 phases，阶段数最多 2 个。
+7. 每个阶段 daily_plan 最多 2 条，每条只写一个可执行动作。
 8. 默认用户每天投入 1 到 2 小时，安排要现实、简洁。
 9. priorityMode 是 manual_p1 / manual_p2 / manual_p3 时，priority 必须遵循用户指定。
 10. adjustmentContext 存在时，基于反馈微调后续节奏，保持目标不变。
@@ -173,8 +179,8 @@ function promptForDetailPlan(body) {
 }
 
 规则：
-1. 阶段数最多 3 个。
-2. 每阶段 daily_plan 最多 3 条。
+1. 阶段数最多 2 个。
+2. 每阶段 daily_plan 最多 2 条。
 3. 每条 daily_plan 只写一个可执行动作。
 4. 默认每天投入 1 到 2 小时，安排要现实。
 5. 尽量包含今天日期 ${today} 的 daily_plan。
@@ -208,14 +214,14 @@ function cleanPlan(plan) {
   };
 
   if (result.complexity === "complex" && Array.isArray(plan?.phases)) {
-    result.phases = plan.phases.slice(0, 3).map((phase) => ({
+    result.phases = plan.phases.slice(0, 2).map((phase) => ({
       phase_name: String(phase?.phase_name || "阶段").slice(0, 30),
       from_date: phase?.from_date || "",
       to_date: phase?.to_date || "",
       duration_days: Number(phase?.duration_days || 1),
       goal: String(phase?.goal || "").slice(0, 80),
       daily_plan: Array.isArray(phase?.daily_plan)
-        ? phase.daily_plan.slice(0, 3).map((day) => ({
+        ? phase.daily_plan.slice(0, 2).map((day) => ({
             day_label: String(day?.day_label || "当天").slice(0, 20),
             date: day?.date || "",
             time_range: String(day?.time_range || "").slice(0, 30),
@@ -291,7 +297,7 @@ app.post("/api/plan-task-detail", async (req, res) => {
   try {
     const error = validateBody(req.body);
     if (error) return res.status(error.includes("环境变量") ? 500 : 400).json({ error });
-    const parsed = await requestJsonPlan(promptForDetailPlan(req.body), 850);
+    const parsed = await requestJsonPlan(promptForDetailPlan(req.body), 650);
     const cleaned = cleanPlan({ ...req.body.quickPlan, ...parsed, complexity: "complex" });
     return res.json(cleaned);
   } catch (error) {
@@ -319,6 +325,211 @@ app.post("/api/plan-task", async (req, res) => {
     });
   }
 });
+
+function validateSecretaryBody(body) {
+  if (!process.env.DEEPSEEK_API_KEY) return "缺少 DEEPSEEK_API_KEY 环境变量";
+  if (!body || typeof body !== "object") return "请求体不能为空";
+  return "";
+}
+
+function promptForSecretary(body, actionLabel) {
+  const today = body.today || localDate();
+  return `
+你是“AI 私人日程秘书”，负责把用户随手记录的事项整理成低压力、可执行的日程。
+
+请严格输出 JSON，不要 Markdown，不要解释 JSON 以外的文字。
+
+核心原则：
+1. 用户不需要自己分类，你要识别：must 必做事项、goal 长期目标、habit 日常习惯、leisure 兴趣放松、errand 临时杂事、preference 用户偏好、time_constraint 时间限制。
+2. 今日安排不要精确到几点，只使用 morning、afternoon、evening、bedtime、anytime。
+3. 兴趣放松可以进入日程，但不能挤掉必做事项。
+4. 尊重 dayStates 中 blocked、rest、no_schedule 的日期，不要在这些日期安排事项。
+5. 如果是顺延或重排，要生成简短 message 和 rescheduleLogs，让用户知道为什么这样调整。
+6. 输出尽量克制，不要催促，不要制造压力。
+7. 如果 entries 非空，必须至少为每条 entry 返回一个对应 items 记录；不要把 entries 当作空内容。
+
+必须返回结构：
+{
+  "message": "一句面向用户的整理说明",
+  "items": [
+    {
+      "id": "保留原 id，没有则生成简短 id",
+      "entryId": "来源 entry id",
+      "taskId": "兼容旧 task id",
+      "rawText": "原始输入",
+      "title": "事项标题",
+      "category": "must/goal/habit/leisure/errand/preference/time_constraint",
+      "status": "active/done/deleted",
+      "priority": "high/medium/low",
+      "importance": 1,
+      "urgency": 1,
+      "deadline": "YYYY-MM-DD 或 null",
+      "fixedDate": "YYYY-MM-DD 或 null",
+      "recurrence": "daily/weekly/null",
+      "preferredTime": "morning/afternoon/evening/bedtime/anytime",
+      "durationBucket": "short/medium/long",
+      "energy": "low/medium/high",
+      "flexible": true,
+      "aiReason": "一句话分类原因"
+    }
+  ],
+  "preferences": {},
+  "dayStates": {
+    "YYYY-MM-DD": {"date":"YYYY-MM-DD","state":"light/normal/tight/rest/blocked/no_schedule","label":"状态","note":"说明"}
+  },
+  "schedules": {
+    "YYYY-MM-DD": {
+      "date": "YYYY-MM-DD",
+      "status": "light/normal/tight/rest/blocked/no_schedule",
+      "summary": "当天建议",
+      "focus": ["今日重点"],
+      "dayTightness": "light/normal/tight/rest/blocked/no_schedule",
+      "slots": {
+        "morning": ["item id"],
+        "afternoon": ["item id"],
+        "evening": ["item id"],
+        "bedtime": ["item id"],
+        "anytime": ["item id"]
+      },
+      "mustItems": ["item id"],
+      "optionalItems": ["item id"],
+      "leisureItems": ["item id"],
+      "deferredFrom": [],
+      "deferredTo": [],
+      "explanation": "为什么这样安排"
+    }
+  },
+  "rescheduleLogs": [
+    {
+      "id": "log id",
+      "createdAt": "ISO 时间",
+      "reason": "顺延或重排原因",
+      "sourceDate": "YYYY-MM-DD",
+      "affectedItemIds": ["item id"],
+      "movedToDates": ["YYYY-MM-DD"],
+      "message": "简短说明"
+    }
+  ]
+}
+
+动作：${actionLabel}
+今天日期：${today}
+用户偏好：${JSON.stringify(body.preferences || {})}
+日期状态：${JSON.stringify(body.dayStates || {})}
+已有日程：${JSON.stringify(body.schedules || {})}
+事项池 entries：${JSON.stringify(body.entries || [])}
+结构化 items：${JSON.stringify(body.items || [])}
+兼容旧任务 tasks：${JSON.stringify(body.tasks || [])}
+额外上下文：${JSON.stringify(body.extra || {})}
+`;
+}
+
+function cleanSecretaryResult(plan) {
+  const cleanId = (v, prefix) => String(v || `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`).slice(0, 80);
+  const categories = new Set(["must", "goal", "habit", "leisure", "errand", "preference", "time_constraint", "legacy_task", "unclassified"]);
+  const statuses = new Set(["active", "done", "deleted"]);
+  const dayStatuses = new Set(["light", "normal", "tight", "rest", "blocked", "no_schedule"]);
+  const slots = ["morning", "afternoon", "evening", "bedtime", "anytime"];
+  const items = Array.isArray(plan?.items) ? plan.items.slice(0, 80).map((item) => ({
+    id: cleanId(item?.id, "item"),
+    entryId: String(item?.entryId || "").slice(0, 80),
+    taskId: String(item?.taskId || "").slice(0, 80),
+    rawText: String(item?.rawText || item?.title || "").slice(0, 300),
+    title: String(item?.title || item?.rawText || "未命名事项").slice(0, 80),
+    category: categories.has(item?.category) ? item.category : "errand",
+    status: statuses.has(item?.status) ? item.status : "active",
+    priority: ["high", "medium", "low"].includes(item?.priority) ? item.priority : "medium",
+    importance: Math.max(1, Math.min(3, Number(item?.importance || 2))),
+    urgency: Math.max(1, Math.min(3, Number(item?.urgency || 2))),
+    deadline: item?.deadline || null,
+    fixedDate: item?.fixedDate || null,
+    recurrence: item?.recurrence || null,
+    preferredTime: slots.includes(item?.preferredTime) ? item.preferredTime : "anytime",
+    durationBucket: ["short", "medium", "long"].includes(item?.durationBucket) ? item.durationBucket : "medium",
+    energy: ["low", "medium", "high"].includes(item?.energy) ? item.energy : "medium",
+    flexible: item?.flexible !== false,
+    createdAt: item?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    aiReason: String(item?.aiReason || "").slice(0, 120)
+  })) : [];
+
+  const schedules = {};
+  if (plan?.schedules && typeof plan.schedules === "object") {
+    Object.entries(plan.schedules).slice(0, 45).forEach(([date, schedule]) => {
+      const slotObj = {};
+      slots.forEach((slot) => {
+        slotObj[slot] = Array.isArray(schedule?.slots?.[slot]) ? schedule.slots[slot].map(String).slice(0, 8) : [];
+      });
+      schedules[date] = {
+        date,
+        status: dayStatuses.has(schedule?.status) ? schedule.status : "normal",
+        summary: String(schedule?.summary || "").slice(0, 160),
+        focus: Array.isArray(schedule?.focus) ? schedule.focus.map(String).slice(0, 4) : [],
+        dayTightness: dayStatuses.has(schedule?.dayTightness) ? schedule.dayTightness : "normal",
+        slots: slotObj,
+        mustItems: Array.isArray(schedule?.mustItems) ? schedule.mustItems.map(String).slice(0, 12) : [],
+        optionalItems: Array.isArray(schedule?.optionalItems) ? schedule.optionalItems.map(String).slice(0, 12) : [],
+        leisureItems: Array.isArray(schedule?.leisureItems) ? schedule.leisureItems.map(String).slice(0, 12) : [],
+        deferredFrom: Array.isArray(schedule?.deferredFrom) ? schedule.deferredFrom.slice(0, 12) : [],
+        deferredTo: Array.isArray(schedule?.deferredTo) ? schedule.deferredTo.slice(0, 12) : [],
+        explanation: String(schedule?.explanation || "").slice(0, 180)
+      };
+    });
+  }
+
+  const dayStates = {};
+  if (plan?.dayStates && typeof plan.dayStates === "object") {
+    Object.entries(plan.dayStates).slice(0, 60).forEach(([date, value]) => {
+      dayStates[date] = {
+        date,
+        state: dayStatuses.has(value?.state) ? value.state : "normal",
+        label: String(value?.label || "").slice(0, 20),
+        note: String(value?.note || "").slice(0, 120),
+        createdAt: value?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    });
+  }
+
+  const rescheduleLogs = Array.isArray(plan?.rescheduleLogs) ? plan.rescheduleLogs.slice(0, 8).map((log) => ({
+    id: cleanId(log?.id, "log"),
+    createdAt: log?.createdAt || new Date().toISOString(),
+    reason: String(log?.reason || "").slice(0, 80),
+    sourceDate: log?.sourceDate || "",
+    affectedItemIds: Array.isArray(log?.affectedItemIds) ? log.affectedItemIds.map(String).slice(0, 20) : [],
+    movedToDates: Array.isArray(log?.movedToDates) ? log.movedToDates.map(String).slice(0, 20) : [],
+    message: String(log?.message || "").slice(0, 220)
+  })) : [];
+
+  return {
+    message: String(plan?.message || "AI 已整理日程。").slice(0, 220),
+    items,
+    preferences: plan?.preferences && typeof plan.preferences === "object" ? plan.preferences : {},
+    dayStates,
+    schedules,
+    rescheduleLogs
+  };
+}
+
+async function handleSecretary(req, res, actionLabel, maxTokens = 2600) {
+  try {
+    const error = validateSecretaryBody(req.body);
+    if (error) return res.status(error.includes("环境变量") ? 500 : 400).json({ error });
+    const parsed = await requestJsonPlan(promptForSecretary(req.body, actionLabel), maxTokens);
+    return res.json(cleanSecretaryResult(parsed));
+  } catch (error) {
+    console.error(`DeepSeek secretary ${actionLabel} error:`, error);
+    return res.status(500).json({
+      error: "调用 AI 失败",
+      detail: error?.error?.message || error?.response?.data?.error?.message || error?.message || "未知错误",
+      raw: error?.raw
+    });
+  }
+}
+
+app.post("/api/organize-schedule", (req, res) => handleSecretary(req, res, "整理事项池并生成今日与未来日程", 3200));
+app.post("/api/reschedule-day", (req, res) => handleSecretary(req, res, "某一天被标记为不可安排，需要顺延并重排后续日程", 2600));
+app.post("/api/reschedule-missed", (req, res) => handleSecretary(req, res, "用户说明今天没完成某事项，需要温和顺延并重排", 2400));
 
 app.use(express.static(__dirname));
 
